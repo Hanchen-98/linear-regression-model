@@ -1,0 +1,286 @@
+---
+title: "project"
+author: "Sophia Gu"
+date: '2019-11-07'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library("readxl")
+getwd()
+data = read_excel("/Users/mac/Desktop/achohol1.xlsx")
+DTdata = data.frame(data)
+head(DTdata)
+library(MASS)
+library(stats4)
+library(olsrr)
+mfit_null  = lm(alcohol~1, data=DTdata)
+mfit_full  = lm(alcohol~fixedacidity+volatileacidity+citricacid+residualsugar+chlorides+freesulfurdioxide+totalsulfurdioxide+density+pH+sulphates, data=DTdata)
+
+# (a) Forward Selection
+step(mfit_null, data=DTdata, scope=list(lower=mfit_null, upper=mfit_full), direction="forward")
+# (b) Backward Selection
+step(mfit_full, data=DTdata, direction="backward")
+# (c) Stepwise Selection
+step(mfit_null, data=DTdata, scope=list(upper=mfit_full), direction="both")
+ols_step_forward_p(mfit_full)
+ols_step_backward_p(mfit_full)
+ols_step_both_p(mfit_full)
+```
+
+
+
+```{r}
+#ridge
+library(glmnet)
+library(lars)
+library(ISLR)
+library(dplyr)
+library(tidyr)
+x<-model.matrix(alcohol~fixedacidity+volatileacidity+citricacid+residualsugar+chlorides+freesulfurdioxide+totalsulfurdioxide+density+pH+sulphates,data=DTdata)
+x=x[,-1]
+y = DTdata %>%
+  select(alcohol) %>%
+  unlist() %>%
+  as.numeric()
+
+DTdata = na.omit(DTdata)
+grid = 10^seq(10, -2, length = 100)
+ridge_mod = glmnet(x, y, alpha = 0, lambda = grid)
+
+
+
+lambdas <- 10^{seq(from=-2,to=5,length=100)}
+rrfit <- glmnet(x,y,alpha=0,lambda=lambdas)     # notice alpha=0
+round(cbind(coef(rrfit,s=lambdas[1]),coef(rrfit,s=lambdas[50])),4)
+plot(rrfit,xvar="lambda")
+cv.rrfit <- cv.glmnet(x,y,alpha=0,lambda=lambdas)
+plot(cv.rrfit)
+cv.rrfit$lambda.min; cv.rrfit$lambda.1se
+rr.best.lam <- cv.rrfit$lambda.1se
+rr.best.lam
+rr.best <- glmnet(x,y,alpha=0,lambda=rr.best.lam)     #fitted model with best landa
+coef(rr.best)
+
+
+
+set.seed(1)
+
+train = DTdata %>%
+  sample_frac(0.5)
+
+test = DTdata %>%
+  setdiff(train)
+
+x_train = model.matrix(alcohol~., train)[,-1]
+x_test = model.matrix(alcohol~., test)[,-1]
+
+y_train = train %>%
+  select(alcohol) %>%
+  unlist() %>%
+  as.numeric()
+
+y_test = test %>%
+  select(alcohol) %>%
+  unlist() %>%
+  as.numeric()
+ridge_mod = glmnet(x_train, y_train, alpha=0, lambda = grid, thresh = 1e-12)
+ridge_pred = predict(ridge_mod, s = 4, newx = x_test)
+mean((ridge_pred - y_test)^2)
+mean((mean(y_train) - y_test)^2)
+ridge_pred = predict(ridge_mod, s = 1e10, newx = x_test)
+mse.ridge=mean((ridge_pred - y_test)^2)
+mse.ridge
+```
+
+```{r fig.width=12, fig.height=10}
+library(lmridge)
+mod <- lmridge(alcohol~., as.data.frame(DTdata), K = seq(0, 0.15, 0.002))
+## Ridge trace
+plot(mod)
+plot(mod, type = "ridge")
+
+## VIF trace
+plot(mod, type = "vif")
+## Ridge trace without abline
+plot(mod, type = "ridge", abline = FALSE)
+```
+
+
+
+```{r}
+#lasso
+lafit <- glmnet(x,y,alpha=1,lambda=lambdas) # notice alpha=1
+plot(lafit,xvar="lambda")
+plot(lafit,xvar="lambda",ylim=c(-8,2))
+cv.lafit <- cv.glmnet(x,y,alpha=1,lambda=lambdas)    #cross validation
+plot(cv.lafit)
+la.best.lam <- cv.lafit$lambda.1se
+la.best.lam
+la.best <- glmnet(x,y,alpha=1,lambda=la.best.lam)     #fitted model with best landa
+coef(la.best)
+
+
+lasso_mod = glmnet(x_train, 
+                   y_train, 
+                   alpha = 1, 
+                   lambda = grid) # Fit lasso model on training data
+
+plot(lasso_mod)    # Draw plot of coefficients
+set.seed(1)
+cv.out = cv.glmnet(x_train, y_train, alpha = 1) # Fit lasso model on training data
+plot(cv.out) # Draw plot of training MSE as a function of lambda
+bestlam = cv.out$lambda.min # Select lamda that minimizes training MSE
+lasso_pred = predict(lasso_mod, s = bestlam, newx = x_test) # Use best lambda to predict test data
+mse.lasso=mean((lasso_pred - y_test)^2) # Calculate test MSE
+mse.lasso
+new_lasso=lm(alcohol~fixedacidity+volatileacidity+totalsulfurdioxide,data=DTdata)
+summary(new_lasso)
+
+cv.out$lambda.min
+```
+
+
+
+```{r fig.width=12, fig.height=6}
+#########Residual plot
+library(e1071)
+library(MPV)
+library(MASS)
+library(VIF)
+library(car)
+#normality assumption
+new_model=lm(alcohol~pH+density+fixedacidity+residualsugar+sulphates+citricacid,data=DTdata)
+
+vif(new_model)
+OLS_Res = new_model$residuals
+Std_Res = rstandard(new_model)
+Stu_Res = rstudent(new_model)
+rStu_Res = rstudent(new_model)
+par(mfrow=c(2,2))
+probplot(OLS_Res, qnorm, xlab='OLS Residuals', ylab='Percent')
+probplot(Std_Res, qnorm, xlab='Standardized Residuals', ylab='Percent')
+probplot(Stu_Res, qnorm, xlab='Studentized Residuals', ylab='Percent')
+probplot(rStu_Res, qnorm, xlab='rStu_Res', ylab='Percent')
+
+par(mfrow=c(2,2))
+plot(new_model)
+myCDs=cooks.distance(new_model)
+sort(myCDs)
+```
+
+```{r}
+#residuals versus the predicted response
+yhat = new_model$fitted.values
+par(mfrow=c(2,2))
+plot(yhat, OLS_Res, xlab='fitted.values', ylab='OLS_Res',main='OLS_Res VS fitted.values', col=3, pch=20,abline(h=0)) 
+plot(yhat, Std_Res, xlab='fitted.values', ylab='Std_Res',main='Std_Res VS fitted.values',col=3, pch=20,abline(h=0))
+plot(yhat, Stu_Res, xlab='fitted.values', ylab='StU_Res',main='Std_Res VS fitted.values',col=3, pch=20,abline(h=0))
+plot(yhat, rStu_Res, xlab='fitted.values', ylab='rStU_Res',main='rStd_Res VS fitted.values',col=3, pch=20,abline(h=0))
+
+
+
+#############transformation
+trans_model=lm(alcohol~pH+density+fixedacidity+log(residualsugar)+sulphates+citricacid,data=DTdata)
+OLS_Res2 = trans_model$residuals
+Std_Res2 = rstandard(trans_model)
+Stu_Res2 = rstudent(trans_model)
+rStu_Res2 = rstudent(trans_model)
+par(mfrow=c(2,2))
+probplot(OLS_Res2, qnorm, xlab='OLS Residuals', ylab='Percent')
+probplot(Std_Res2, qnorm, xlab='Standardized Residuals', ylab='Percent')
+probplot(Stu_Res2, qnorm, xlab='Studentized Residuals', ylab='Percent')
+probplot(rStu_Res2, qnorm, xlab='rStu_Res', ylab='Percent')
+
+plot(yhat, OLS_Res2, xlab='fitted.values', ylab='OLS_Res',main='OLS_Res VS fitted.values',col=4, pch=20,abline(h=0)) 
+plot(yhat, Std_Res2, xlab='fitted.values', ylab='Std_Res',main='Std_Res VS fitted.values',col=4, pch=20,abline(h=0))
+plot(yhat, Stu_Res2, xlab='fitted.values', ylab='StU_Res',main='Std_Res VS fitted.values',col=4, pch=20,abline(h=0))
+plot(yhat, rStu_Res2, xlab='fitted.values', ylab='rStU_Res',main='rStd_Res VS fitted.values',col=4, pch=20,abline(h=0))
+
+summary(trans_model)
+
+
+
+
+
+
+###Cook's D Bar Plot
+ols_plot_cooksd_bar(new_model)    
+###Cook’s D Chart
+ols_plot_cooksd_chart(new_model)  
+###DFBETAs Panel
+ols_plot_dfbetas(new_model)       
+###DFFITS Plot
+ols_plot_dffits(new_model) 
+
+DTdata1<-DTdata[-c(174,244,245,34,268),]
+
+DTdata1
+
+new_model2=lm(alcohol~pH+density+fixedacidity+residualsugar+sulphates+citricacid,data=DTdata1)
+
+OLS_Res3 = new_model2$residuals
+Std_Res3 = rstandard(new_model2)
+Stu_Res3 = rstudent(new_model2)
+rStu_Res3 = rstudent(new_model2)
+par(mfrow=c(2,2))
+probplot(OLS_Res3, qnorm, xlab='OLS Residuals', ylab='Percent')
+probplot(Std_Res3, qnorm, xlab='Standardized Residuals', ylab='Percent')
+probplot(Stu_Res3, qnorm, xlab='Studentized Residuals', ylab='Percent')
+probplot(rStu_Res3, qnorm, xlab='rStu_Res', ylab='Percent')
+
+
+#residuals versus the predicted response
+yhat3 = new_model2$fitted.values
+par(mfrow=c(2,2))
+plot(yhat3, OLS_Res3, xlab='fitted.values', ylab='OLS_Res',main='OLS_Res VS fitted.values', col=3, pch=20,abline(h=0)) 
+plot(yhat3, Std_Res3, xlab='fitted.values', ylab='Std_Res',main='Std_Res VS fitted.values',col=3, pch=20,abline(h=0))
+plot(yhat3, Stu_Res3, xlab='fitted.values', ylab='StU_Res',main='Std_Res VS fitted.values',col=3, pch=20,abline(h=0))
+plot(yhat3, rStu_Res3, xlab='fitted.values', ylab='rStU_Res',main='rStd_Res VS fitted.values',col=3, pch=20,abline(h=0))
+summary(new_model2)
+
+
+
+
+#############transformation2
+trans_model2=lm(alcohol~pH+density+fixedacidity+log(residualsugar)+sulphates+citricacid,data=DTdata1)
+OLS_Res4 = trans_model2$residuals
+Std_Res4 = rstandard(trans_model2)
+Stu_Res4 = rstudent(trans_model2)
+rStu_Res4 = rstudent(trans_model2)
+par(mfrow=c(2,2))
+probplot(OLS_Res4, qnorm, xlab='OLS Residuals', ylab='Percent')
+probplot(Std_Res4, qnorm, xlab='Standardized Residuals', ylab='Percent')
+probplot(Stu_Res4, qnorm, xlab='Studentized Residuals', ylab='Percent')
+probplot(rStu_Res4, qnorm, xlab='rStu_Res', ylab='Percent')
+
+yhat5=trans_model2$fitted.values
+plot(yhat5, OLS_Res4, xlab='fitted.values', ylab='OLS_Res',main='OLS_Res VS fitted.values',col=4, pch=20,abline(h=0)) 
+plot(yhat5, Std_Res4, xlab='fitted.values', ylab='Std_Res',main='Std_Res VS fitted.values',col=4, pch=20,abline(h=0))
+plot(yhat5, Stu_Res4, xlab='fitted.values', ylab='StU_Res',main='Std_Res VS fitted.values',col=4, pch=20,abline(h=0))
+plot(yhat5, rStu_Res4, xlab='fitted.values', ylab='rStU_Res',main='rStd_Res VS fitted.values',col=4, pch=20,abline(h=0))
+
+summary(trans_model2)
+
+```
+```{r}
+library(Rmisc)
+CI(DTdata1$pH,ci=0.95)
+CI(DTdata1$density,ci=0.95)
+CI(DTdata1$fixedacidity,ci=0.95)
+CI(DTdata1$residualsugar,ci=0.95)
+CI(DTdata1$sulphates,ci=0.95)
+CI(DTdata1$citricacid,ci=0.95)
+
+#prediction
+new_data=data.frame(pH=3.326,density=0.997,fixedacidity=2.439,residualsugar=7.999,sulphates=0.69,citricacid=0.235)
+predict(new_model,newdata=new_data,interval="confidence",level=0.95)
+```
+
+
